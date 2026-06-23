@@ -328,7 +328,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "beetswap"
 version = "0.5.0"
-source = "git+https://github.com/Kubedoll-Heavy-Industries/beetswap.git?branch=chore%2Fmultihash-codetable-0.2#246c45b672349546e22c8cb29b87ed271aa89bdc"
+source = "git+https://github.com/Kubedoll-Heavy-Industries/beetswap.git?branch=codex%2Fstack-upgrade#eaee652dbd2776f351c62d23e6cac430c3a53456"
 dependencies = [
  "asynchronous-codec",
  "blockstore",

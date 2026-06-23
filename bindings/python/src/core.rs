@@ -2,6 +2,7 @@ use lattica::{network, rpc, common};
 use std::sync::{Arc};
 use tokio::sync::{Mutex};
 use pyo3::{prelude::*, types::PyDict, IntoPyObjectExt};
+type PyObject = Py<PyAny>;
 use tokio::runtime::Runtime;
 use libp2p::{Multiaddr, PeerId};
 use async_trait::async_trait;
@@ -88,8 +89,8 @@ impl LFuture {
             self.handle.lock().await.take()
         });
 
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 if let Some(handle) = handle_opt {
                     let join_ret = self.runtime.block_on(async { tokio::time::timeout(Duration::from_secs(timeout), handle).await});
 
@@ -123,7 +124,7 @@ impl LFuture {
     pub fn __await__(slf: PyRef<'_, Self>) -> PyResult<PyObject> {
         let handle_arc = slf.handle.clone();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let future = pyo3_async_runtimes::tokio::future_into_py(py, async move {
                 let mut handle_lock = handle_arc.lock().await;
                 if let Some(handle) = handle_lock.take() {
@@ -160,8 +161,8 @@ impl StreamIter {
 
     fn __next__(&self) -> Option<Vec<u8>> {
         // None => StopIteration
-        Python::with_gil(|py| {
-            py.allow_threads(||{
+        Python::attach(|py| {
+            py.detach(||{
                 self.runtime.block_on(async {
                     let mut guard = self.rx.lock().await;
                     if let Some(rx) = guard.as_mut() {
@@ -180,7 +181,7 @@ impl StreamIter {
 
     fn __anext__(&self) -> PyResult<PyObject> {
         let rx_arc = self.rx.clone();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let fut = pyo3_async_runtimes::tokio::future_into_py(py, async move {
                 let mut guard = rx_arc.lock().await;
                 if let Some(rx) = guard.as_mut() {
@@ -197,13 +198,13 @@ impl StreamIter {
     }
 
     fn cancel(&self) -> PyResult<()> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let client: &Bound<PyAny> = self.client.bind(py);
             client.call_method1("cancel_stream_iter", (self.request_id.clone(),))
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to call cancel: {:?}", e)))?;
 
             // clean
-            py.allow_threads(||{
+            py.detach(||{
                 self.runtime.block_on(async {
                     *self.rx.lock().await = None;
                 })
@@ -327,8 +328,8 @@ impl LatticaSDK {
     }
 
     fn store_with_subkey(&self, key: &str, value: &[u8], expiration_time: f64, subkey: Option<&str>) -> PyResult<()> {
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 self.runtime.block_on(async move {
                     if let Some(subkey) = subkey {
                         self.lattica.store_subkey(key, subkey, value.to_vec(), expiration_time).await
@@ -342,12 +343,12 @@ impl LatticaSDK {
     }
 
     fn get_with_subkey(&self, key: &str) -> PyResult<Option<PyObject>> {
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 self.runtime.block_on(async move {
                     match self.lattica.get_with_subkey(key).await {
                         Ok(result) => {
-                            Python::with_gil(|py| {
+                            Python::attach(|py| {
                                 match result {
                                     Some(common::types::DhtValue::Simple { value, expiration }) => {
                                         // return (value, expiration)
@@ -466,8 +467,8 @@ impl LatticaSDK {
     #[pyo3(signature = (cid_str, *, timeout_secs = 10))]
     fn get_block(&self, cid_str: &str, timeout_secs: u64) -> PyResult<Vec<u8>> {
         let lattica = self.lattica.clone();
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 self.runtime.block_on(async move {
                     let cid = Cid::try_from(cid_str)
                         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid CID: {:?}", e)))?;
@@ -485,8 +486,8 @@ impl LatticaSDK {
     fn put_block(&self, data: &[u8]) -> PyResult<String> {
         let lattica = self.lattica.clone();
         let data_owned = data.to_vec();
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 self.runtime.block_on(async move {
                     let block = BytesBlock(data_owned);
                     let cid = lattica.put_block(&block).await?;
@@ -498,8 +499,8 @@ impl LatticaSDK {
 
     fn remove_block(&self, cid_str: &str) -> PyResult<()> {
         let lattica = self.lattica.clone();
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 self.runtime.block_on(async move {
                     let cid = Cid::try_from(cid_str)
                         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid CID: {:?}", e)))?;
@@ -512,8 +513,8 @@ impl LatticaSDK {
 
     fn start_providing(&self, key: &str) -> PyResult<()> {
         let lattica = self.lattica.clone();
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 self.runtime.block_on(async move {
                     let record = RecordKey::new(&key);
                     lattica.start_providing(record).await?;
@@ -525,8 +526,8 @@ impl LatticaSDK {
 
     fn get_providers(&self, key: &str) -> PyResult<Vec<String>> {
         let lattica = self.lattica.clone();
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 self.runtime.block_on(async move {
                     let record = RecordKey::new(&key);
                     let peers = lattica.get_providers(record).await?;
@@ -538,8 +539,8 @@ impl LatticaSDK {
 
     fn stop_providing(&self, key: &str) -> PyResult<()> {
         let lattica = self.lattica.clone();
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 self.runtime.block_on(async move {
                     let record = RecordKey::new(&key);
                     lattica.stop_providing(record).await?;
@@ -562,8 +563,8 @@ impl LatticaSDK {
 impl RpcClient {
     fn call(&self, method: &str, data: &[u8]) -> PyResult<LFuture>  {
         let lattica_clone = self.lattica.clone();
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 let peer_id: PeerId = self.peer_id.parse()
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid peer ID: {:?}", e)))?;
                 let method = method.to_string();
@@ -595,8 +596,8 @@ impl RpcClient {
 
     fn call_stream<'py>(&self, method: &str, data: &[u8]) -> PyResult<LFuture> {
         let lattica_clone = self.lattica.clone();
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 let peer_id: PeerId = self.peer_id.parse()
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid peer ID: {:?}", e)))?;
                 
@@ -632,8 +633,8 @@ impl RpcClient {
         let method = method.to_string();
         let data = data.to_vec();
 
-        let (request_id, rx) = Python::with_gil(|py| {
-            py.allow_threads(|| {
+        let (request_id, rx) = Python::attach(|py| {
+            py.detach(|| {
                 runtime.block_on(async move {
                     lattica.call_stream_iter(peer_id, method, data).await
                         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to call stream iter: {:?}", e)))
@@ -641,7 +642,7 @@ impl RpcClient {
             })
         })?;
 
-        let client = Python::with_gil(|py| -> PyResult<Py<PyAny>> {
+        let client = Python::attach(|py| -> PyResult<Py<PyAny>> {
             Ok(self.clone().into_pyobject(py)?.into_any().unbind())
         })?;
 
@@ -659,8 +660,8 @@ impl RpcClient {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid peer ID: {:?}", e)))?;
         let req_id = request_id.to_string();
 
-        Python::with_gil(|py| {
-            py.allow_threads(|| {
+        Python::attach(|py| {
+            py.detach(|| {
                 self.runtime.block_on(async move {
                     lattica_clone.cancel_stream_iter(peer_id, req_id).await
                         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to cancel stream: {:?}", e)))
@@ -688,7 +689,7 @@ impl rpc::RpcService for PythonRpcService {
     }
 
     fn methods(&self) -> Vec<String> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let instance = self.instance.bind(py);
             let methods = instance.getattr("_rpc_methods").unwrap();
             methods.extract::<Vec<String>>().unwrap_or_default()
@@ -702,12 +703,12 @@ impl rpc::RpcService for PythonRpcService {
         request: rpc::RpcRequest,
     ) -> RpcResult<rpc::RpcResponse> {
         let method_name = format!("_handle_{}", method);
-        let instance_ptr = Python::with_gil(|_py| {
+        let instance_ptr = Python::attach(|_py| {
             self.instance.clone()
         });
 
         let result = tokio::task::spawn_blocking(move || {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let instance = instance_ptr.bind(py);
 
                 if let Ok(handler) = instance.getattr(&method_name) {
@@ -745,12 +746,12 @@ impl rpc::RpcService for PythonRpcService {
     ) -> RpcResult<rpc::StreamResponse> {
         let method_name = format!("_handle_stream_{}", method);
 
-        let instance_ptr = Python::with_gil(|_py| {
+        let instance_ptr = Python::attach(|_py| {
             self.instance.clone()
         });
 
         let result = tokio::task::spawn_blocking(move || {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let instance = instance_ptr.bind(py);
                 if let Ok(handler) = instance.getattr(&method_name) {
                     match handler.call1((request.data.as_ref(), )) {
@@ -791,7 +792,7 @@ impl rpc::RpcService for PythonRpcService {
         request: StreamRequest,
     ) -> RpcResult<Option<Receiver<Vec<u8>>>> {
         let method_name = format!("_handle_stream_iter_{}", method);
-        let has_iter = Python::with_gil(|py| {
+        let has_iter = Python::attach(|py| {
             let inst = self.instance.bind(py);
             inst.getattr(&method_name).is_ok()
         });
@@ -799,13 +800,13 @@ impl rpc::RpcService for PythonRpcService {
             return Ok(None);
         }
 
-        let instance_ptr = Python::with_gil(|_| {self.instance.clone()});
+        let instance_ptr = Python::attach(|_| {self.instance.clone()});
         let data = request.data.to_vec();
 
         let (tx, rx) = mpsc::channel::<Vec<u8>>(16);
 
         tokio::task::spawn_blocking(move || {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let instance = instance_ptr.bind(py);
                 let Ok(handler) = instance.getattr(&method_name) else { return; };
                 let Ok(iterable) = handler.call1((data.as_slice(),)) else { return; };
